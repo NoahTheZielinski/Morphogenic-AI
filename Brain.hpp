@@ -1,3 +1,4 @@
+
 #pragma once
 #include <vector>
 #include <unordered_map>
@@ -183,6 +184,13 @@ public:
         // seed behavior trivial to implement layer-by-layer.
         layers.resize(num_layers);
         for (size_t l = 0; l < num_layers; ++l) {
+            // Layer 0 reads the mega-neuron's true input width; every layer
+            // after that reads the previous layer's output width (n_outputs),
+            // since current_layer_output is fed back in as the next layer's
+            // current_layer_input. Must match exactly or L.weights[o][i]
+            // walks past the end of the inner vector once real (non-seed)
+            // weights are used -- this was a live out-of-bounds bug until
+            // this fix, just masked by the passthrough seed path.
             size_t in_w = (l == 0) ? n_inputs : n_outputs;
             layers[l].weights.assign(n_outputs, std::vector<double>(in_w, 0.0));
             layers[l].bias.assign(n_outputs, 0.0);
@@ -222,7 +230,10 @@ public:
             // is handled the same way as base neuron: strongest magnitude per slot).
             // For simplicity in v1, we treat each inbox message as belonging to
             // input slot (index in inbox order); real wiring truncates/pads.
-            std::fill(current_layer_input.begin(), current_layer_input.end(), 0.0);
+            current_layer_input.assign(n_inputs, 0.0); // resize back to n_inputs every session,
+                                                         // not just re-zero (it was left at
+                                                         // n_outputs size from the previous
+                                                         // session's last layer output)
             for (size_t i = 0; i < inbox_this_tick.size() && i < n_inputs; ++i) {
                 current_layer_input[i] = inbox_this_tick[i];
             }
@@ -415,7 +426,7 @@ public:
                 // MegaNeuron/InputNeuron/OutputNeuron have full vector outputs
                 // available via final_outputs when multi-output fanout matters;
                 // base Neuron just uses pending_output.
-                auto* mega = dynamic_cast<MegaNeuron*>(n.get());
+                    auto* mega = dynamic_cast<MegaNeuron*>(n.get());
                 if (mega && !mega->final_outputs.empty() && mega->n_outputs > 1) {
                     // Fan out per-output-slot round robin across outgoing paths,
                     // or broadcast full vector if outgoing count matches. v1: broadcast
